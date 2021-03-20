@@ -1,0 +1,61 @@
+version: 2.1
+orbs:
+  node: circleci/node@4.1.0
+jobs:
+  test:
+    machine: true
+    steps:
+      - checkout
+      - run:
+          name: 'Install Project Node'
+          command: |
+            set +x
+            source ~/.bashrc
+            nvm install 15.12.0
+            NODE_DIR=$(dirname $(which node))
+            echo "export PATH=$NODE_DIR:\$PATH" >> $BASH_ENV
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+      - run:
+          command: npm install
+      - save_cache:
+          key: dependency-cache-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - run:
+          command: npm run test:cov
+      - run:
+          name: codecov
+          command: bash <(curl -s https://codecov.io/bash)
+  build-and-push:
+    environment:
+      IMAGE_NAME: sdevilcry/scalper
+    docker:
+      - image: circleci/node:15.12.0
+    steps:
+      - setup_remote_docker:
+          docker_layer_caching: false # Plan is disabled
+      - attach_workspace:
+          at: .
+      - run: |
+          IMAGE_TAG="0.0.${CIRCLE_BUILD_NUM}"
+          docker build -t $IMAGE_NAME:latest -f ./docker/Dockerfile .
+          echo $DOCKER_PASSWORD | docker login -u $DOCKER_LOGIN --password-stdin
+          docker tag $IMAGE_NAME:latest $IMAGE_NAME:$IMAGE_TAG
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
+workflows:
+  version: 2
+  test-build-and-publish:
+    jobs:
+      - test
+      - build-and-push:
+          requires:
+            - test
+          filters:
+            branches:
+              only: master
